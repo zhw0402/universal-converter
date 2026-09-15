@@ -44,19 +44,37 @@ struct ContentView: View {
         .overlay {
             DropTargetOverlay(active: isDropTargeted)
         }
-        .fileImporter(isPresented: $app.isPickerPresented,
-                      allowedContentTypes: app.pickerRequest == .outputFolder ? [.folder] : [.item],
-                      allowsMultipleSelection: app.pickerRequest == .files) { result in
-            guard case .success(let urls) = result else { return }
-            switch app.pickerRequest {
-            case .files:
-                app.addFiles(urls)
-            case .outputFolder:
-                if let url = urls.first {
-                    app.setOutputDirectory(url)
+        .sheet(isPresented: $app.isPickerPresented) {
+            DocumentPicker(mode: app.pickerRequest == .outputFolder ? .folder : .files) { urls in
+                app.isPickerPresented = false
+                guard !urls.isEmpty else { return }
+                switch app.pickerRequest {
+                case .files:
+                    app.addFiles(urls)
+                case .outputFolder:
+                    if let url = urls.first {
+                        app.setOutputDirectory(url)
+                    }
                 }
             }
+            .ignoresSafeArea()
         }
+        .alert("有文件没能导入", isPresented: importNoticeBinding) {
+            Button("知道了", role: .cancel) {}
+        } message: {
+            Text(app.importNotice ?? "")
+        }
+        .onOpenURL { url in
+            // "用万能转换打开" / 分享到本 App
+            guard url.isFileURL else { return }
+            app.addFiles([url])
+        }
+    }
+
+    /// Lets the alert dismiss itself by clearing the notice.
+    private var importNoticeBinding: Binding<Bool> {
+        Binding(get: { app.importNotice != nil },
+                set: { if !$0 { app.importNotice = nil } })
     }
 
     // MARK: - Queue

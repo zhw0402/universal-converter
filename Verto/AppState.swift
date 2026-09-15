@@ -31,6 +31,8 @@ final class AppState: ObservableObject {
         case files, outputFolder
     }
     @Published var isPickerPresented = false
+    /// Non-nil when a batch of files was rejected — shown as an alert.
+    @Published var importNotice: String?
     var pickerRequest: PickerRequest = .files
 
     // MARK: - Output folder
@@ -92,13 +94,30 @@ final class AppState: ObservableObject {
 
     func addFiles(_ urls: [URL]) {
         let existing = Set(jobs.map { $0.sourceURL.path })
+        var rejected: [String] = []
+
         for url in urls where !existing.contains(url.path) {
             let accessing = url.startAccessingSecurityScopedResource()
             let job = ConversionJob(url: url, defaults: jobDefaults)
             if accessing { url.stopAccessingSecurityScopedResource() }
-            guard let job else { continue }
+
+            guard let job else {
+                // Silence here used to look like "nothing happened at all",
+                // so report what iOS told us the file actually is.
+                let values = try? url.resourceValues(forKeys: [.contentTypeKey])
+                let identifier = values?.contentType?.identifier ?? "未知类型"
+                rejected.append("· \(url.lastPathComponent)  [\(identifier)]")
+                continue
+            }
+
             jobs.append(job)
             loadMetadata(for: job)
+        }
+
+        if !rejected.isEmpty {
+            importNotice = "以下文件暂时无法转换：\n"
+                + rejected.joined(separator: "\n")
+                + "\n\n把这段内容发给我，我就能把对应格式补上。"
         }
     }
 
