@@ -1,0 +1,101 @@
+name: Build unsigned IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: write
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain and targets
+        run: |
+          xcodebuild -version
+          echo "---- 工程内可用的 target / scheme ----"
+          xcodebuild -project Verto.xcodeproj -list || true
+          echo "---- 待编译的 Swift 文件 ----"
+          find Verto -name "*.swift" | sort
+
+      - name: Build (unsigned, device arm64)
+        id: build
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Verto.xcodeproj \
+            -target Verto \
+            -configuration Release \
+            -sdk iphoneos \
+            -arch arm64 \
+            SYMROOT="$PWD/build" \
+            OBJROOT="$PWD/build/intermediates" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_ENTITLEMENTS="" \
+            ONLY_ACTIVE_ARCH=NO \
+            build 2>&1 | tee build.log
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          APP_PATH=$(find "$PWD/build" -maxdepth 3 -name "*.app" -type d -path "*Release-iphoneos*" | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "::error::找不到编译产物 .app，以下是 build 目录结构："
+            find "$PWD/build" -maxdepth 4 | head -50
+            exit 1
+          fi
+          echo "找到应用包: $APP_PATH"
+
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          IPA_NAME="UniversalConverter-unsigned.ipa"
+          rm -f "$IPA_NAME"
+          zip -qry "$IPA_NAME" Payload
+          rm -rf Payload
+
+          echo "IPA 大小: $(du -h "$IPA_NAME" | cut -f1)"
+          shasum -a 256 "$IPA_NAME" | tee SHA256.txt
+          unzip -l "$IPA_NAME" | head -20
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: UniversalConverter-unsigned-ipa
+          path: |
+            *.ipa
+            SHA256.txt
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Publish release
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: 万能转换 build ${{ github.run_number }}
+          body: |
+            由 GitHub Actions 自动构建的**未签名** IPA。
+
+            安装方式：用 Sideloadly / AltStore 等工具，以自己的 Apple ID 重新签名后安装。
+            未签名 IPA 无法直接拖进「文件」App 安装。
+          files: |
+            UniversalConverter-unsigned.ipa
+            SHA256.txt
