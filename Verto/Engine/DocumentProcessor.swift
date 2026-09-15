@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import CoreFoundation
 import UniformTypeIdentifiers
 #if canImport(UIKit)
 import UIKit
@@ -138,15 +139,26 @@ enum DocumentProcessor {
     // MARK: - Helpers
 
     /// Text files in the wild are not always UTF-8 — try the usual
-    /// suspects before giving up.
+    /// suspects before giving up. GB18030 covers the Chinese legacy
+    /// encodings as well, since GBK and GB2312 are subsets of it.
     static func decodeText(_ data: Data) -> String {
         if let text = String(data: data, encoding: .utf8) { return text }
-        for encoding: String.Encoding in [.utf16, .utf16LittleEndian, .utf16BigEndian,
-                                          .isoLatin1, .windowsCP1252, .gb_18030_2000] {
+        let candidates: [String.Encoding] = [.utf16, .utf16LittleEndian, .utf16BigEndian,
+                                             .isoLatin1, .windowsCP1252, gb18030]
+        for encoding in candidates {
             if let text = String(data: data, encoding: encoding) { return text }
         }
         return String(decoding: data, as: UTF8.self)
     }
+
+    /// GB18030 has no `String.Encoding` constant — it is only reachable
+    /// through CoreFoundation's encoding tables.
+    static let gb18030: String.Encoding = {
+        let cfEncoding = CFStringEncodings.GB_18030_2000
+        let bridged = CFStringConvertEncodingToNSStringEncoding(
+            CFStringEncoding(cfEncoding.rawValue))
+        return String.Encoding(rawValue: UInt(bridged))
+    }()
 
     private static func write(_ text: String, to url: URL) throws {
         try Data(text.utf8).write(to: url)
